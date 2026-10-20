@@ -1,0 +1,28 @@
+{
+  "name": "gtv-cortes-ia",
+  "version": "1.0.0",
+  "description": "GTV Cortes IA - Analisa podcasts e gera cortes verticais 9:16 com rastreamento de rosto",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "postinstall": "node scripts/patch-faceapi.mjs && npm install --prefix client",
+    "dev": "concurrently -n server,client -c blue,green \"node server/index.js\" \"npm run dev --prefix client\"",
+    "test:pipeline": "node scripts/test-pipeline.mjs",
+    "build": "npm run build --prefix client",
+    "start": "cross-env NODE_ENV=production node server/index.js"
+  },
+  "dependencies": {
+    "@vladmandic/face-api": "^1.7.15",
+    "archiver": "^7.0.1",
+    "cors": "^2.8.5",
+    "cross-env": "^7.0.3",
+    "express": "^4.21.2",
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0",
+    "jpeg-js": "^0.4.4",
+    "multer": "^1.4.5-lts.1"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
