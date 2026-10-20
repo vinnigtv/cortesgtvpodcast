@@ -124,6 +124,25 @@ export function keyframesFromTrack(track, duration, step = 1) {
   return pts;
 }
 
+export function simplifyKeyframes(points, { eps = 2.5, maxPoints = 80 } = {}) {
+  if (points.length <= 2) return points.slice();
+  const build = (threshold) => {
+    const out = [points[0]];
+    for (let i = 1; i < points.length - 1; i++) {
+      const last = out[out.length - 1];
+      if (Math.hypot(points[i].x - last.x, points[i].y - last.y) >= threshold) out.push(points[i]);
+    }
+    out.push(points[points.length - 1]);
+    return out;
+  };
+  let out = build(eps);
+  while (out.length > maxPoints) {
+    eps *= 1.6;
+    out = build(eps);
+  }
+  return out;
+}
+
 export function piecewiseLinear(points, varName = 't') {
   if (!points.length) return '0';
   if (points.length === 1) return points[0].x.toFixed(2);

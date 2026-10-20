@@ -1,80 +1,99 @@
-import { pipeline, env } from '@xenova/transformers';
+import { Worker } from 'node:worker_threads';
 import { extractPcm } from './video.js';
 
-env.allowLocalModels = false;
-env.backends.onnx.wasm.numThreads = 1;
+const WORKER_URL = new URL('./transcribe-worker.js', import.meta.url);
 
-const MODEL = process.env.GTV_WHISPER_MODEL || 'Xenova/whisper-tiny';
-const CHUNK_SEC = 300;
-const OVERLAP_SEC = 2;
+let worker = null;
+const pending = new Map();
+let jobSeq = 0;
 
-let transcriberPromise = null;
-
-async function getTranscriber(job) {
-  if (!transcriberPromise) {
-    transcriberPromise = pipeline('automatic-speech-recognition', MODEL, {
-      quantized: true,
-      progress_callback: (p) => {
-        if (!job) return;
-        if (p.status === 'progress' && p.file) {
-          const pct = Math.round(p.progress || 0);
-          job.message = `Baixando modelo de transcrição (${pct}%)...`;
-        }
-      },
-    });
+function handleWorkerMessage(msg) {
+  if (msg?.type === 'progress') {
+    const p = pending.get(msg.jobId);
+    if (p?.onProgress) p.onProgress(msg);
+    return;
   }
-  return transcriberPromise;
+  if (msg?.type === 'done' || msg?.type === 'error') {
+    const p = pending.get(msg.jobId);
+    if (!p) return;
+    pending.delete(msg.jobId);
+    clearTimeout(p.timer);
+    if (msg.type === 'done') p.resolve(msg);
+    else {
+      resetWorker();
+      p.reject(new Error(msg.message || 'Falha na transcrição.'));
+    }
+  }
+}
+
+function ensureWorker() {
+  if (worker) return worker;
+  worker = new Worker(WORKER_URL);
+  worker.unref();
+  worker.on('message', handleWorkerMessage);
+  worker.on('error', (e) => {
+    console.error('[transcribe-worker] erro:', e.message);
+    for (const [, p] of pending) {
+      clearTimeout(p.timer);
+      p.reject(new Error(`Worker de transcrição falhou: ${e.message}`));
+    }
+    pending.clear();
+    worker = null;
+  });
+  worker.on('exit', (code) => {
+    worker = null;
+    if (code !== 0 && pending.size) {
+      for (const [, p] of pending) {
+        clearTimeout(p.timer);
+        p.reject(new Error(`Worker de transcrição saiu inesperadamente (código ${code}).`));
+      }
+      pending.clear();
+    }
+  });
+  return worker;
+}
+
+function resetWorker() {
+  const w = worker;
+  worker = null;
+  if (w) w.terminate().catch(() => {});
 }
 
 export async function transcribeAudio(videoPath, { job } = {}) {
   job && (job.message = 'Extraindo áudio para transcrição...');
   const pcm = await extractPcm(videoPath);
-  const audio = new Float32Array(pcm.buffer, pcm.byteOffset, pcm.byteLength / 4);
-  const sr = 16000;
-  const totalSec = audio.length / sr;
+  const totalSec = pcm.byteLength / 4 / 16000;
+  const audio =
+    pcm.byteOffset === 0 && pcm.byteLength === pcm.buffer.byteLength
+      ? pcm.buffer
+      : pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength);
 
-  job && (job.message = 'Carregando modelo Whisper...');
-  const transcriber = await getTranscriber(job);
+  // safeguard: modelo + inferência em CPU (~5x mais rápido que o real no tiny)
+  const timeoutMs = Math.max(10 * 60_000, (totalSec / 2) * 1000 + 5 * 60_000);
+  const jobId = ++jobSeq;
 
-  const segments = [];
-  let offset = 0;
-  let part = 0;
-  const parts = Math.max(1, Math.ceil((totalSec - OVERLAP_SEC) / (CHUNK_SEC - OVERLAP_SEC)));
+  return await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pending.delete(jobId);
+      resetWorker();
+      reject(
+        new Error(
+          `Transcrição excedeu o limite de ${Math.round(timeoutMs / 60000)} min.`
+        )
+      );
+    }, timeoutMs);
 
-  while (offset < totalSec) {
-    const end = Math.min(audio.length, Math.round((offset + CHUNK_SEC) * sr));
-    const slice = audio.subarray(Math.round(offset * sr), end);
-    if (slice.length < sr * 0.5) break;
-
-    part++;
-    if (job) {
-      job.message = `Transcrevendo áudio (parte ${part}/${parts}) — Whisper IA...`;
-      job.progress = Math.min(0.35, 0.08 + 0.27 * ((part - 1) / parts));
-    }
-
-    const out = await transcriber(slice, {
-      chunk_length_s: 30,
-      stride_length_s: 5,
-      return_timestamps: true,
-      language: 'portuguese',
-      task: 'transcribe',
+    pending.set(jobId, {
+      resolve,
+      reject,
+      timer,
+      onProgress: (msg) => {
+        if (!job) return;
+        job.message = msg.message;
+        if (msg.progress != null) job.progress = msg.progress;
+      },
     });
 
-    for (const c of out.chunks || []) {
-      const text = (c.text || '').trim();
-      if (!text) continue;
-      const start = (c.timestamp?.[0] ?? 0) + offset;
-      const endT = (c.timestamp?.[1] ?? start + 2) + offset;
-      segments.push({ start: round2(start), end: round2(endT), text });
-    }
-
-    offset += CHUNK_SEC - OVERLAP_SEC;
-  }
-
-  const text = segments.map((s) => s.text).join(' ').trim();
-  return { model: MODEL, segments, text, durationSec: round2(totalSec) };
-}
-
-function round2(v) {
-  return Math.round(v * 100) / 100;
+    ensureWorker().postMessage({ type: 'transcribe', audio, jobId }, [audio]);
+  });
 }

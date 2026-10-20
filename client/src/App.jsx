@@ -69,16 +69,27 @@ export default function App() {
     try {
       const { jobId } = await api.analyze(id);
       const started = Date.now();
-      await pollWhile(
+      const data = await pollWhile(
         id,
-        (data) => data.status === 'analyzed' || Date.now() - started > 30 * 60 * 1000,
-        () => {
-          setAnalysisPct((p) => Math.min(95, p + 2));
-          setAnalysisMsg('Analisando áudio e detectando rostos do convidado...');
+        (d) => d.job?.status === 'done' || d.job?.status === 'error' || Date.now() - started > 60 * 60 * 1000,
+        (d) => {
+          const j = d.job;
+          if (j) {
+            setAnalysisPct(Math.round((j.progress || 0) * 100));
+            setAnalysisMsg(j.message || 'Analisando...');
+          } else {
+            setAnalysisPct((p) => Math.min(95, p + 2));
+            setAnalysisMsg('Analisando vídeo...');
+          }
         }
       );
-      const data = await refresh(id);
-      setSelected(new Set(data.clips.map((c) => c.id)));
+      if (data.job?.status === 'error') {
+        setError(`Falha na análise: ${data.job.error || 'erro desconhecido'}`);
+      } else if (data.status !== 'analyzed') {
+        setError('A análise demorou mais que o esperado. Verifique o terminal do servidor e tente novamente.');
+      } else {
+        setSelected(new Set(data.clips.map((c) => c.id)));
+      }
     } catch (e) {
       setError(e.message);
     } finally {

@@ -1,8 +1,8 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { extractFrames, ffmpegWithProgress, probe } from './video.js';
 import { detectFacesInJpeg } from './face.js';
-import { detectRange, buildTrack, keyframesFromTrack, piecewiseLinear, centerCropFallback } from './tracker.js';
+import { detectRange, buildTrack, keyframesFromTrack, simplifyKeyframes, piecewiseLinear, centerCropFallback } from './tracker.js';
 
 export async function renderClip({ video, clip, outDir, tmpDir, job }) {
   const meta = await probe(video.path);
@@ -46,8 +46,8 @@ export async function renderClip({ video, clip, outDir, tmpDir, job }) {
   if (track?.ok) {
     const pts = keyframesFromTrack(track, duration, 1);
     crop = { cropW: track.cropW, cropH: track.cropH };
-    xExpr = piecewiseLinear(pts.map((p) => ({ t: p.t, x: p.x })));
-    yExpr = piecewiseLinear(pts.map((p) => ({ t: p.t, x: p.y })));
+    xExpr = piecewiseLinear(simplifyKeyframes(pts.map((p) => ({ t: p.t, x: p.x }))));
+    yExpr = piecewiseLinear(simplifyKeyframes(pts.map((p) => ({ t: p.t, x: p.y }))));
   } else {
     crop = centerCropFallback(meta.width, meta.height);
     xExpr = String(crop.x);
@@ -61,18 +61,18 @@ export async function renderClip({ video, clip, outDir, tmpDir, job }) {
   job.message = 'Renderizando corte vertical 9:16...';
   job.progress = 0.1;
 
-  const vf = [
-    `crop=${crop.cropW}:${crop.cropH}:'floor(${xExpr}+0.5)':'floor(${yExpr}+0.5)'`,
-    `scale=${targetW}:${targetH}:flags=lanczos`,
-    'setsar=1',
-  ].join(',');
+  // filter graph em arquivo: expressões longas de crop estouram o limite de
+  // linha de comando do Windows (erro "Failed to configure input pad")
+  const filterGraph = `[0:v]crop=${crop.cropW}:${crop.cropH}:'floor(${xExpr}+0.5)':'floor(${yExpr}+0.5)',scale=${targetW}:${targetH}:flags=lanczos,setsar=1[outv]`;
+  const filterFile = path.join(tmpDir, `flt_${clip.id}.txt`);
+  await writeFile(filterFile, filterGraph, 'utf8');
 
   const args = [
     '-ss', clip.start.toFixed(3),
     '-i', video.path,
     '-t', duration.toFixed(3),
-    '-vf', vf,
-    '-map', '0:v:0',
+    '-filter_complex_script', filterFile,
+    '-map', '[outv]',
     '-map', '0:a:0?',
     '-c:v', 'libx264',
     '-preset', 'veryfast',
@@ -84,10 +84,14 @@ export async function renderClip({ video, clip, outDir, tmpDir, job }) {
     outFile,
   ];
 
-  await ffmpegWithProgress(args, duration, (p) => {
-    job.progress = 0.1 + p * 0.9;
-    job.message = `Renderizando corte vertical... ${Math.round(p * 100)}%`;
-  });
+  try {
+    await ffmpegWithProgress(args, duration, (p) => {
+      job.progress = 0.1 + p * 0.9;
+      job.message = `Renderizando corte vertical... ${Math.round(p * 100)}%`;
+    });
+  } finally {
+    await rm(filterFile, { force: true }).catch(() => {});
+  }
 
   return {
     file: outFile,

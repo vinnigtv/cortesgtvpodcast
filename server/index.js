@@ -34,12 +34,17 @@ const videos = new Map();
 const clips = new Map();
 
 function publicVideo(v) {
+  const j = v.jobId ? getJob(v.jobId) : null;
   return {
     id: v.id,
     name: v.name,
     meta: v.meta,
     createdAt: v.createdAt,
     status: v.status,
+    analyzing: !!v.analyzing,
+    job: j
+      ? { id: j.id, status: j.status, progress: j.progress, message: j.message, error: j.error }
+      : null,
     analysis: v.analysis,
     clips: [...clips.values()]
       .filter((c) => c.videoId === v.id)
@@ -140,6 +145,7 @@ app.post('/api/videos/:id/analyze', (req, res) => {
   if (v.analyzing) return res.status(409).json({ error: 'Análise já em andamento.' });
   v.analyzing = true;
   const job = createJob('analyze', { videoId: v.id });
+  v.jobId = job.id;
   enqueue(job, async (j) => {
     try {
       const result = await analyzeVideo(v, j, TMP);

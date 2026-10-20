@@ -7,6 +7,7 @@ import { probe, run } from '../server/services/video.js';
 import { initFaceDetector, faceDetectorReady, detectFacesInJpeg } from '../server/services/face.js';
 import { analyzeVideo } from '../server/services/analyze.js';
 import { renderClip } from '../server/services/render.js';
+import { simplifyKeyframes, piecewiseLinear } from '../server/services/tracker.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -140,6 +141,22 @@ async function main() {
   const buf = await readFile(faceImg);
   const det = await detectFacesInJpeg(buf);
   check('TinyFaceDetector detecta rosto na foto', det.faces.length > 0, `${det.faces.length} rosto(s)`);
+
+  console.log('\n-- 2b) Expressão de crop longa (regressão limite de cmdline) --');
+  const longPts = Array.from({ length: 400 }, (_, i) => ({
+    t: i * 0.5,
+    x: 400 + Math.sin(i / 3) * 60 + (i % 7) * 0.4,
+    y: 200 + Math.cos(i / 4) * 40,
+  }));
+  const rawExpr = piecewiseLinear(longPts);
+  const simp = simplifyKeyframes(longPts);
+  const simpExprX = piecewiseLinear(simp.map((p) => ({ t: p.t, x: p.x })));
+  const simpExprY = piecewiseLinear(simp.map((p) => ({ t: p.t, x: p.y })));
+  check(
+    'expressão simplificada < 8k chars',
+    simpExprX.length < 8000 && simpExprY.length < 8000,
+    `bruta=${rawExpr.length} chars → simplificada=${simpExprX.length} chars (${simp.length} pts)`
+  );
 
   console.log('\n-- 3) Vídeo com rosto em movimento (tracking + crop) --');
   const faceVid = path.join(TMP, 'facevid.mp4');
