@@ -33,12 +33,17 @@ export const api = {
   async getVideo(videoId) {
     return json(await fetch(`/api/videos/${videoId}`));
   },
-  async patchClip(clipId, start, end, title) {
+  async patchClip(clipId, start, end, title, extra = {}) {
     return json(
       await fetch(`/api/clips/${clipId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ start, end, ...(title !== undefined ? { title } : {}) }),
+        body: JSON.stringify({
+          start,
+          end,
+          ...(title !== undefined ? { title } : {}),
+          ...extra,
+        }),
       })
     );
   },

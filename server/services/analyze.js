@@ -90,6 +90,8 @@ export async function analyzeVideo(video, job, tmpDir) {
     });
   }
 
+  suggestions.sort((a, b) => (b.viralPct || 0) - (a.viralPct || 0));
+
   const stats = windows.length ? computeSpeechStats(windows) : null;
   return {
     suggestions,

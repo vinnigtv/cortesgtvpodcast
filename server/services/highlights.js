@@ -176,12 +176,15 @@ export function buildCandidates(transcript, windows, { duration, minLen = 30, ma
   return scored;
 }
 
-export function selectCandidates(scored, { minScoreRatio = 0.55, absoluteMin = 0.32, minGap = 8 } = {}) {
+export const MAX_CLIPS = 20;
+
+export function selectCandidates(scored, { minScoreRatio = 0.5, absoluteMin = 0.3, minGap = 6, limit = MAX_CLIPS } = {}) {
   if (!scored.length) return [];
   const top = scored[0].score;
   const threshold = Math.min(top, Math.max(absoluteMin, top * minScoreRatio));
   const picked = [];
   for (const c of scored) {
+    if (picked.length >= limit) break;
     if (c.score < threshold) break;
     const overlaps = picked.some(
       (p) => c.start < p.end + minGap && c.end > p.start - minGap
@@ -199,39 +202,19 @@ export function viralPercent(content, faceCoverage) {
 }
 
 export function makeTitle(stats, fallbackLabel) {
-  if (!stats || !stats.sentences.length) return fallbackLabel;
-
-  const keywords = topKeywords(stats.words);
-  let best = null;
-  let bestScore = -1;
-  for (const s of stats.sentences) {
-    const n = norm(s);
-    let sc = 0;
-    sc += countHits(s, HOOKS) * 3;
-    sc += countHits(s, EMOTIONAL) * 1.5;
-    sc += countHits(s, STORY_MARKERS);
-    if (n.includes('?')) sc += 2.5;
-    if (n.includes('!')) sc += 1;
-    for (const k of keywords.slice(0, 5)) if (n.includes(norm(k))) sc += 2;
-    const len = s.length;
-    if (len >= 30 && len <= 110) sc += 2;
-    else if (len < 20 || len > 160) sc -= 2;
-    if (sc > bestScore) {
-      bestScore = sc;
-      best = s;
-    }
-  }
-
-  if (!best) return fallbackLabel;
-  let title = best
-    .replace(/\[[^\]]*\]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/^[a-záéíóúâêôãõç]/, (m) => m.toUpperCase());
-  if (title.length > 72) {
-    title = title.slice(0, 72).replace(/\s+\S*$/, '') + '…';
-  }
+  if (!stats || !stats.words.length) return fallbackLabel;
+  const keywords = topKeywords(stats.words, 5).map(cleanKeyword).filter(Boolean);
+  if (!keywords.length) return fallbackLabel;
+  const topic = keywords.slice(0, 3);
+  let title = topic.length > 1 ? `${topic.slice(0, -1).join(', ')} e ${topic.at(-1)}` : topic[0];
+  title = title.replace(/^./, (m) => m.toUpperCase());
   return title || fallbackLabel;
+}
+
+function cleanKeyword(w) {
+  let k = w.replace(/(ções|ção|s|es)$/, (m) => (m === 's' || m === 'es' ? '' : 'ão')).trim();
+  if (k.length < 3) k = w;
+  return k;
 }
 
 export function topKeywords(wordList, limit = 6) {

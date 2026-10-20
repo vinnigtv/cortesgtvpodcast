@@ -48,6 +48,7 @@ function publicVideo(v) {
     analysis: v.analysis,
     clips: [...clips.values()]
       .filter((c) => c.videoId === v.id)
+      .sort((a, b) => (b.viralPct || 0) - (a.viralPct || 0))
       .map(publicClip),
   };
 }
@@ -65,6 +66,8 @@ function publicClip(c) {
     transcriptExcerpt: c.transcriptExcerpt || '',
     reason: c.reason,
     faceCoverage: c.faceCoverage,
+    captions: c.captions !== false,
+    progressBar: c.progressBar !== false,
     status: c.status,
     progress: c.progress,
     error: c.error,
@@ -167,6 +170,8 @@ app.post('/api/videos/:id/analyze', (req, res) => {
           transcriptExcerpt: s.transcriptExcerpt,
           reason: s.reason,
           faceCoverage: s.faceCoverage,
+          captions: true,
+          progressBar: true,
           status: 'suggested',
           progress: 0,
           error: null,
@@ -187,12 +192,14 @@ app.patch('/api/clips/:id', (req, res) => {
   const c = clips.get(req.params.id);
   if (!c) return res.status(404).json({ error: 'Corte não encontrado.' });
   if (c.status === 'rendering') return res.status(409).json({ error: 'Aguarde o render atual.' });
-  const { start, end, title } = req.body || {};
+  const { start, end, title, captions, progressBar } = req.body || {};
   const v = videos.get(c.videoId);
   const max = v?.meta.duration ?? Infinity;
   if (typeof title === 'string') {
-    c.title = title.trim().slice(0, 120) || c.title;
+    c.title = title.trim().slice(0, 80) || c.title;
   }
+  if (typeof captions === 'boolean') c.captions = captions;
+  if (typeof progressBar === 'boolean') c.progressBar = progressBar;
   if (start === undefined && end === undefined) {
     return res.json(publicClip(c));
   }
@@ -267,6 +274,32 @@ app.get('/api/clips/:id', (req, res) => {
   const c = clips.get(req.params.id);
   if (!c) return res.status(404).json({ error: 'Corte não encontrado.' });
   res.json(publicClip(c));
+});
+
+app.get('/api/clips/:id/srt', (req, res) => {
+  const c = clips.get(req.params.id);
+  if (!c) return res.status(404).json({ error: 'Corte não encontrado.' });
+  const v = videos.get(c.videoId);
+  const segs = (v?.transcript?.segments || []).filter((s) => s.end > c.start && s.start < c.end);
+  if (!segs.length) return res.status(404).json({ error: 'Sem transcrição para gerar legendas.' });
+  const srtTime = (sec) => {
+    const ms = Math.max(0, Math.round(sec * 1000));
+    const h = String(Math.floor(ms / 3600000)).padStart(2, '0');
+    const m = String(Math.floor((ms % 3600000) / 60000)).padStart(2, '0');
+    const s = String(Math.floor((ms % 60000) / 1000)).padStart(2, '0');
+    const mss = String(ms % 1000).padStart(3, '0');
+    return `${h}:${m}:${s},${mss}`;
+  };
+  const body = segs
+    .map((s, i) => {
+      const st = Math.max(0, s.start - c.start);
+      const en = Math.max(st + 0.3, Math.min(s.end - c.start, c.end - c.start));
+      return `${i + 1}\n${srtTime(st)} --> ${srtTime(en)}\n${s.text.trim()}\n`;
+    })
+    .join('\n');
+  res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="corte-${Math.round(c.start)}s-${Math.round(c.end)}s.srt"`);
+  res.send(body);
 });
 
 app.get('/api/clips/:id/file', (req, res) => {

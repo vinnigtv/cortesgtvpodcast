@@ -5,6 +5,8 @@ export default function ClipCard({ clip, duration, src, selected, onToggle, onUp
   const [start, setStart] = useState(clip.start);
   const [end, setEnd] = useState(clip.end);
   const [title, setTitle] = useState(clip.title || '');
+  const [captions, setCaptions] = useState(clip.captions !== false);
+  const [progressBar, setProgressBar] = useState(clip.progressBar !== false);
   const [saving, setSaving] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [showRendered, setShowRendered] = useState(false);
@@ -16,7 +18,9 @@ export default function ClipCard({ clip, duration, src, selected, onToggle, onUp
     setStart(clip.start);
     setEnd(clip.end);
     setTitle(clip.title || '');
-  }, [clip.start, clip.end, clip.title]);
+    setCaptions(clip.captions !== false);
+    setProgressBar(clip.progressBar !== false);
+  }, [clip.start, clip.end, clip.title, clip.captions, clip.progressBar]);
 
   useEffect(() => {
     if (['queued', 'rendering'].includes(clip.status) && !rendering) setRendering(true);
@@ -33,8 +37,10 @@ export default function ClipCard({ clip, duration, src, selected, onToggle, onUp
     () =>
       Math.abs(start - clip.start) > 0.05 ||
       Math.abs(end - clip.end) > 0.05 ||
-      (title || '') !== (clip.title || ''),
-    [start, end, clip.start, clip.end, title, clip.title]
+      (title || '') !== (clip.title || '') ||
+      captions !== (clip.captions !== false) ||
+      progressBar !== (clip.progressBar !== false),
+    [start, end, clip.start, clip.end, title, clip.title, captions, clip.captions, progressBar, clip.progressBar]
   );
 
   const clampRange = (s, e) => {
@@ -47,7 +53,7 @@ export default function ClipCard({ clip, duration, src, selected, onToggle, onUp
     setSaving(true);
     try {
       const [ns, ne] = clampRange(start, end);
-      await api.patchClip(clip.id, ns, ne, title);
+      await api.patchClip(clip.id, ns, ne, title, { captions, progressBar });
       onUpdated();
     } catch (e) {
       onError(e.message);
@@ -61,7 +67,7 @@ export default function ClipCard({ clip, duration, src, selected, onToggle, onUp
     try {
       if (dirty) {
         const [ns, ne] = clampRange(start, end);
-        await api.patchClip(clip.id, ns, ne, title);
+        await api.patchClip(clip.id, ns, ne, title, { captions, progressBar });
       }
       await api.renderClip(clip.id);
       onUpdated();
@@ -104,15 +110,16 @@ export default function ClipCard({ clip, duration, src, selected, onToggle, onUp
           <input type="checkbox" checked={selected} onChange={onToggle} />
         </label>
         <div className={`clip-score ${viralBand}`} title={`Chance de viralizar: ${viral}%`}>
-          {viral}%
+          <span className="clip-score-num">{viral}%</span>
+          <span className="clip-score-label">viral</span>
         </div>
         <div className="clip-info">
           <input
             className="clip-title-input"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="Título do corte (gerado pela IA)"
-            maxLength={120}
+            placeholder="Tema do corte"
+            maxLength={80}
           />
           <div className="clip-sub">
             {fmtTime(clip.start)} → {fmtTime(clip.end)} · {Math.round(clip.end - clip.start)}s
@@ -127,17 +134,19 @@ export default function ClipCard({ clip, duration, src, selected, onToggle, onUp
 
       <div className="clip-body">
         <div className="player-wrap">
-          {showRendered && clip.hasFile ? (
-            <video key={renderKey} src={previewSrc} controls playsInline />
-          ) : (
-            <video
-              ref={videoRef}
-              src={previewSrc}
-              controls
-              playsInline
-              onTimeUpdate={onTimeUpdate}
-            />
-          )}
+          <div className={`player-frame ${showRendered && clip.hasFile ? 'vertical' : ''}`}>
+            {showRendered && clip.hasFile ? (
+              <video key={renderKey} src={previewSrc} controls playsInline />
+            ) : (
+              <video
+                ref={videoRef}
+                src={previewSrc}
+                controls
+                playsInline
+                onTimeUpdate={onTimeUpdate}
+              />
+            )}
+          </div>
         </div>
 
         <div className="clip-controls">
@@ -174,6 +183,16 @@ export default function ClipCard({ clip, duration, src, selected, onToggle, onUp
                 />
                 <span className="time">{fmtTime(end)}</span>
               </div>
+              <div className="tool-toggles">
+                <label className="toggle">
+                  <input type="checkbox" checked={captions} onChange={(e) => setCaptions(e.target.checked)} />
+                  <span>Legendas automáticas</span>
+                </label>
+                <label className="toggle">
+                  <input type="checkbox" checked={progressBar} onChange={(e) => setProgressBar(e.target.checked)} />
+                  <span>Barra de progresso</span>
+                </label>
+              </div>
               <div className="clip-actions">
                 {dirty && (
                   <button className="btn ghost" disabled={saving} onClick={save}>
@@ -193,6 +212,11 @@ export default function ClipCard({ clip, duration, src, selected, onToggle, onUp
                     {showTranscript ? 'Ocultar transcrição' : 'Ver transcrição'}
                   </button>
                 )}
+                {clip.transcriptExcerpt && (
+                  <a className="btn ghost" href={`/api/clips/${clip.id}/srt`} download>
+                    Baixar .srt
+                  </a>
+                )}
                 {clip.hasFile && (
                   <a className="btn primary" href={`/api/clips/${clip.id}/download`}>
                     Baixar MP4
@@ -208,6 +232,8 @@ export default function ClipCard({ clip, duration, src, selected, onToggle, onUp
                   {clip.render.faceTracked
                     ? `rosto rastreado (${Math.round(clip.render.faceCoverage * 100)}% dos frames)`
                     : 'sem rosto estável — enquadramento central'}
+                  {clip.render.captions ? ' · legendas' : ''}
+                  {clip.render.progressBar ? ' · barra de progresso' : ''}
                 </div>
               )}
               {clip.error && <div className="clip-error">{clip.error}</div>}
