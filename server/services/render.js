@@ -164,6 +164,7 @@ export async function renderClip({ video, clip, outDir, tmpDir, job }) {
   } finally {
     await rm(filterFile, { force: true }).catch(() => {});
     for (const f of captionFiles) await rm(f, { force: true }).catch(() => {});
+    await rm(path.join(tmpDir, `trk_${clip.id}`), { recursive: true, force: true }).catch(() => {});
   }
 
   return {

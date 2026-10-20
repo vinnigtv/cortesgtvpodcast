@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { extractPcm, extractFrames } from './video.js';
 import { pcmToWindows, computeSpeechStats } from './audioEnergy.js';
@@ -50,6 +50,7 @@ export async function analyzeVideo(video, job, tmpDir) {
     job.progress = 0.45 + 0.5 * ((i + 1) / selected.length);
 
     let faceCoverage = 0;
+    const candDir = path.join(tmpDir, `cand_${video.id}_${i}`);
     try {
       const frames = await extractFrames({
         input: file,
@@ -57,7 +58,7 @@ export async function analyzeVideo(video, job, tmpDir) {
         duration: Math.min(len, 60),
         fps: 0.5,
         height: 240,
-        outDir: path.join(tmpDir, `cand_${video.id}_${i}`),
+        outDir: candDir,
       });
       const loaded = [];
       for (const fr of frames) loaded.push({ t: fr.t, buf: await readFile(fr.file) });
@@ -70,6 +71,8 @@ export async function analyzeVideo(video, job, tmpDir) {
       faceCoverage = detections.filter((d) => d.face).length / (detections.length || 1);
     } catch (e) {
       console.warn(`Falha ao detectar rostos no trecho ${i}:`, e.message);
+    } finally {
+      await rm(candDir, { recursive: true, force: true }).catch(() => {});
     }
 
     const fallbackTitle = `Corte em destaque (${Math.round(c.start)}s–${Math.round(c.end)}s)`;

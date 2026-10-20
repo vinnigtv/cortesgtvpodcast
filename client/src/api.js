@@ -13,13 +13,19 @@ export const api = {
         if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
       };
       xhr.onload = () => {
+        let data = {};
         try {
-          const data = JSON.parse(xhr.responseText || '{}');
-          if (xhr.status >= 400) reject(new Error(data.error || `Erro ${xhr.status}`));
-          else resolve(data);
-        } catch (e) {
-          reject(e);
+          data = JSON.parse(xhr.responseText || '{}');
+        } catch {
+          data = {
+            error:
+              xhr.status >= 400
+                ? `Erro ${xhr.status} no servidor. Verifique o log do terminal (pode ser falta de espaço em disco).`
+                : 'Resposta inválida do servidor.',
+          };
         }
+        if (xhr.status >= 400) reject(new Error(data.error || `Erro ${xhr.status}`));
+        else resolve(data);
       };
       xhr.onerror = () => reject(new Error('Falha no upload.'));
       const fd = new FormData();

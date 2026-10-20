@@ -25,6 +25,22 @@ for (const d of [DATA, UPLOADS, OUTPUTS, TMP]) {
   fs.mkdirSync(d, { recursive: true });
 }
 
+// limpa temporários de execuções anteriores (frames, filtros, legendas)
+try {
+  for (const entry of fs.readdirSync(TMP)) {
+    fs.rmSync(path.join(TMP, entry), { recursive: true, force: true });
+  }
+} catch {}
+
+function freeDiskBytes(dir) {
+  try {
+    const st = fs.statfsSync(dir);
+    return Number(st.bavail) * Number(st.bsize);
+  } catch {
+    return Infinity;
+  }
+}
+
 const PORT = Number(process.env.PORT || 3000);
 const app = express();
 app.use(cors());
@@ -89,7 +105,20 @@ const upload = multer({
   }),
 });
 
-app.post('/api/upload', upload.single('video'), async (req, res) => {
+app.post('/api/upload', (req, res, next) => {
+  const size = Number(req.headers['content-length'] || 0);
+  const free = freeDiskBytes(UPLOADS);
+  // margem de 1 GB para análise/render
+  if (size && free !== Infinity && free < size + 1024 * 1024 * 1024) {
+    return res.status(507).json({
+      error:
+        `Espaço em disco insuficiente no servidor. Livre: ${(free / 1024 ** 3).toFixed(1)} GB, ` +
+        `necessário: ${((size + 1024 ** 3) / 1024 ** 3).toFixed(1)} GB. ` +
+        'Apague vídeos antigos em data/uploads e tente novamente.',
+    });
+  }
+  next();
+}, upload.single('video'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
     const meta = await probe(req.file.path);
@@ -360,6 +389,18 @@ app.get(/^\/(?!api\/).*/, (req, res) => {
   const index = path.join(CLIENT_DIST, 'index.html');
   if (fs.existsSync(index)) return res.sendFile(index);
   res.status(404).send('Client não buildado. Rode: npm run build');
+});
+
+// erros de API sempre em JSON (evita "Unexpected token '<'" no front)
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const isFull = err?.code === 'ENOSPC' || /no space left/i.test(err?.message || '');
+  const status = isFull ? 507 : err?.status || 500;
+  const message = isFull
+    ? 'Sem espaço em disco no servidor. Apague vídeos antigos em data/uploads e tente novamente.'
+    : err?.message || 'Erro interno do servidor.';
+  if (req.path.startsWith('/api/')) return res.status(status).json({ error: message });
+  res.status(status).send(message);
 });
 
 app.listen(PORT, async () => {
