@@ -281,13 +281,71 @@ body {
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 10px;
-  min-width: 44px;
+  min-width: 52px;
   height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 800;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.clip-score.hot {
+  color: #3ddc97;
+  border-color: rgba(61, 220, 151, 0.55);
+  background: rgba(61, 220, 151, 0.08);
+}
+
+.clip-score.warm {
+  color: #ffc14c;
+  border-color: rgba(255, 193, 76, 0.5);
+  background: rgba(255, 193, 76, 0.08);
+}
+
+.clip-score.cool {
+  color: var(--muted);
+}
+
+.clip-title-input {
+  width: 100%;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+  font-family: inherit;
+  padding: 3px 6px;
+  margin-left: -6px;
+}
+
+.clip-title-input:hover,
+.clip-title-input:focus {
+  border-color: var(--border);
+  background: var(--panel-2);
+  outline: none;
+}
+
+.clip-sub {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.clip-keywords {
   color: var(--accent-2);
+}
+
+.clip-transcript {
+  margin: 6px 0 0;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .clip-info {

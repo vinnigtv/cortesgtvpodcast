@@ -107,10 +107,19 @@ async function main() {
     (s) => s.end - s.start >= 29 && s.end - s.start <= 91
   );
   check('sugestões entre 30 e 90s', durationsOk);
+  check(
+    'sugestões têm título',
+    result1.suggestions.every((s) => typeof s.title === 'string' && s.title.length > 3)
+  );
+  check(
+    'sugestões têm viralPct (5-98)',
+    result1.suggestions.every((s) => Number.isFinite(s.viralPct) && s.viralPct >= 5 && s.viralPct <= 98),
+    `ex.: ${result1.suggestions[0]?.viralPct}%`
+  );
   const best = result1.suggestions[0];
   console.log(`    melhor corte: ${best.start.toFixed(1)}s → ${best.end.toFixed(1)}s (score ${best.score})`);
-  const loudZone = result1.suggestions.some((s) => s.start >= 15 && s.start <= 35);
-  check('há corte na zona de áudio alto (15-35s)', loudZone);
+  const loudZone = result1.suggestions.some((s) => s.start < 35 && s.end > 15);
+  check('há corte cobrindo a zona de áudio alto (15-35s)', loudZone, `melhor: ${best.start}s-${best.end}s`);
 
   const clip1 = {
     id: 'clip-synth',

@@ -51,9 +51,13 @@ function publicClip(c) {
   return {
     id: c.id,
     videoId: c.videoId,
+    title: c.title || null,
     start: c.start,
     end: c.end,
     score: c.score,
+    viralPct: c.viralPct ?? null,
+    keywords: c.keywords || [],
+    transcriptExcerpt: c.transcriptExcerpt || '',
     reason: c.reason,
     faceCoverage: c.faceCoverage,
     status: c.status,
@@ -75,21 +79,23 @@ const upload = multer({
       cb(null, `${id}${ext}`);
     },
   }),
-  limits: { fileSize: 8 * 1024 * 1024 * 1024 },
 });
 
 app.post('/api/upload', upload.single('video'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
     const meta = await probe(req.file.path);
+    const st = await fsp.stat(req.file.path);
     const video = {
       id: path.parse(req.file.filename).name,
       name: req.file.originalname,
       path: req.file.path,
+      mtimeMs: st.mtimeMs,
       meta,
       createdAt: Date.now(),
       status: 'ready',
       analysis: null,
+      transcript: null,
     };
     videos.set(video.id, video);
     res.json(publicVideo(video));
@@ -146,9 +152,13 @@ app.post('/api/videos/:id/analyze', (req, res) => {
         const clip = {
           id: randomUUID(),
           videoId: v.id,
+          title: s.title,
           start: s.start,
           end: s.end,
           score: s.score,
+          viralPct: s.viralPct,
+          keywords: s.keywords,
+          transcriptExcerpt: s.transcriptExcerpt,
           reason: s.reason,
           faceCoverage: s.faceCoverage,
           status: 'suggested',
@@ -171,9 +181,15 @@ app.patch('/api/clips/:id', (req, res) => {
   const c = clips.get(req.params.id);
   if (!c) return res.status(404).json({ error: 'Corte não encontrado.' });
   if (c.status === 'rendering') return res.status(409).json({ error: 'Aguarde o render atual.' });
-  const { start, end } = req.body || {};
+  const { start, end, title } = req.body || {};
   const v = videos.get(c.videoId);
   const max = v?.meta.duration ?? Infinity;
+  if (typeof title === 'string') {
+    c.title = title.trim().slice(0, 120) || c.title;
+  }
+  if (start === undefined && end === undefined) {
+    return res.json(publicClip(c));
+  }
   if (typeof start !== 'number' || typeof end !== 'number') {
     return res.status(400).json({ error: 'start e end devem ser números.' });
   }

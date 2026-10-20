@@ -4,16 +4,19 @@ import { api, clipFileUrl, fmtTime } from '../api.js';
 export default function ClipCard({ clip, duration, src, selected, onToggle, onUpdated, onError }) {
   const [start, setStart] = useState(clip.start);
   const [end, setEnd] = useState(clip.end);
+  const [title, setTitle] = useState(clip.title || '');
   const [saving, setSaving] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [showRendered, setShowRendered] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
   const [renderKey, setRenderKey] = useState(0);
   const videoRef = useRef(null);
 
   useEffect(() => {
     setStart(clip.start);
     setEnd(clip.end);
-  }, [clip.start, clip.end]);
+    setTitle(clip.title || '');
+  }, [clip.start, clip.end, clip.title]);
 
   useEffect(() => {
     if (['queued', 'rendering'].includes(clip.status) && !rendering) setRendering(true);
@@ -27,8 +30,11 @@ export default function ClipCard({ clip, duration, src, selected, onToggle, onUp
   }, [clip.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const dirty = useMemo(
-    () => Math.abs(start - clip.start) > 0.05 || Math.abs(end - clip.end) > 0.05,
-    [start, end, clip.start, clip.end]
+    () =>
+      Math.abs(start - clip.start) > 0.05 ||
+      Math.abs(end - clip.end) > 0.05 ||
+      (title || '') !== (clip.title || ''),
+    [start, end, clip.start, clip.end, title, clip.title]
   );
 
   const clampRange = (s, e) => {
@@ -41,7 +47,7 @@ export default function ClipCard({ clip, duration, src, selected, onToggle, onUp
     setSaving(true);
     try {
       const [ns, ne] = clampRange(start, end);
-      await api.patchClip(clip.id, ns, ne);
+      await api.patchClip(clip.id, ns, ne, title);
       onUpdated();
     } catch (e) {
       onError(e.message);
@@ -55,7 +61,7 @@ export default function ClipCard({ clip, duration, src, selected, onToggle, onUp
     try {
       if (dirty) {
         const [ns, ne] = clampRange(start, end);
-        await api.patchClip(clip.id, ns, ne);
+        await api.patchClip(clip.id, ns, ne, title);
       }
       await api.renderClip(clip.id);
       onUpdated();
@@ -88,18 +94,31 @@ export default function ClipCard({ clip, duration, src, selected, onToggle, onUp
 
   const previewSrc = showRendered && clip.hasFile ? `${clipFileUrl(clip.id)}#${renderKey}` : src;
 
+  const viral = clip.viralPct ?? Math.round((clip.score || 0) * 100);
+  const viralBand = viral >= 70 ? 'hot' : viral >= 45 ? 'warm' : 'cool';
+
   return (
     <article className={`clip-card ${selected ? 'selected' : ''}`}>
       <div className="clip-head">
         <label className="check">
           <input type="checkbox" checked={selected} onChange={onToggle} />
         </label>
-        <div className="clip-score" title={`Pontuação: ${clip.score}`}>
-          {Math.round(clip.score * 100)}
+        <div className={`clip-score ${viralBand}`} title={`Chance de viralizar: ${viral}%`}>
+          {viral}%
         </div>
         <div className="clip-info">
-          <div className="clip-title">
+          <input
+            className="clip-title-input"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Título do corte (gerado pela IA)"
+            maxLength={120}
+          />
+          <div className="clip-sub">
             {fmtTime(clip.start)} → {fmtTime(clip.end)} · {Math.round(clip.end - clip.start)}s
+            {clip.keywords?.length ? (
+              <span className="clip-keywords"> · {clip.keywords.slice(0, 4).join(', ')}</span>
+            ) : null}
           </div>
           <div className="clip-reason muted">{clip.reason}</div>
         </div>
@@ -169,12 +188,20 @@ export default function ClipCard({ clip, duration, src, selected, onToggle, onUp
                     {showRendered ? 'Prévia original' : 'Prévia do corte'}
                   </button>
                 )}
+                {clip.transcriptExcerpt && (
+                  <button className="btn ghost" onClick={() => setShowTranscript((s) => !s)}>
+                    {showTranscript ? 'Ocultar transcrição' : 'Ver transcrição'}
+                  </button>
+                )}
                 {clip.hasFile && (
                   <a className="btn primary" href={`/api/clips/${clip.id}/download`}>
                     Baixar MP4
                   </a>
                 )}
               </div>
+              {showTranscript && clip.transcriptExcerpt && (
+                <blockquote className="clip-transcript">“{clip.transcriptExcerpt}…”</blockquote>
+              )}
               {clip.render && (
                 <div className="muted small">
                   {clip.render.width}×{clip.render.height} ·{' '}

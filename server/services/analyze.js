@@ -1,50 +1,66 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { extractPcm, extractFrames, fileExists } from './video.js';
-import { pcmToWindows, pickCandidates, computeSpeechStats } from './audioEnergy.js';
+import { extractPcm, extractFrames } from './video.js';
+import { pcmToWindows, computeSpeechStats } from './audioEnergy.js';
 import { detectFacesInJpeg } from './face.js';
 import { detectRange } from './tracker.js';
+import { transcribeAudio } from './transcribe.js';
+import {
+  buildCandidates,
+  selectCandidates,
+  contentScore,
+  viralPercent,
+  makeTitle,
+  topKeywords,
+} from './highlights.js';
 
 export async function analyzeVideo(video, job, tmpDir) {
   const { path: file, meta } = video;
-  job.message = 'Extraindo áudio...';
-  job.progress = 0.05;
 
+  job.message = 'Extraindo energia de áudio...';
+  job.progress = 0.03;
   let windows = [];
   if (meta.hasAudio) {
     const pcm = await extractPcm(file);
     windows = pcmToWindows(pcm);
   }
 
-  job.message = 'Selecionando trechos promissores...';
-  job.progress = 0.15;
+  job.message = 'Transcrevendo e entendendo o conteúdo (Whisper IA)...';
+  job.progress = 0.08;
+  let transcript = null;
+  if (meta.hasAudio && meta.duration > 2) {
+    if (video.transcript?.videoMtime === video.mtimeMs && video.transcript?.segments?.length) {
+      transcript = video.transcript;
+    } else {
+      transcript = await transcribeAudio(file, { job });
+      video.transcript = transcript;
+    }
+  }
 
-  const candidates = pickCandidates(windows, {
-    duration: meta.duration,
-    count: 8,
-  });
+  job.message = 'Pontuando trechos e montando sugestões...';
+  job.progress = 0.4;
+  const scored = buildCandidates(transcript, windows, { duration: meta.duration });
+  const selected = selectCandidates(scored);
 
   const suggestions = [];
-  for (let i = 0; i < candidates.length; i++) {
-    const c = candidates[i];
+  for (let i = 0; i < selected.length; i++) {
+    const c = selected[i];
     const len = c.end - c.start;
-    job.message = `Analisando rostos no trecho ${i + 1}/${candidates.length}...`;
-    job.progress = 0.2 + 0.75 * (i / candidates.length);
+    job.message = `Verificando convidado em quadro (corte ${i + 1}/${selected.length})...`;
+    job.progress = 0.45 + 0.5 * ((i + 1) / selected.length);
 
     let faceCoverage = 0;
     try {
       const frames = await extractFrames({
         input: file,
         start: c.start,
-        duration: len,
-        fps: 2,
-        height: 360,
+        duration: Math.min(len, 60),
+        fps: 0.5,
+        height: 240,
         outDir: path.join(tmpDir, `cand_${video.id}_${i}`),
       });
       const loaded = [];
-      for (const fr of frames) {
-        loaded.push({ t: fr.t, buf: await readFile(fr.file) });
-      }
+      for (const fr of frames) loaded.push({ t: fr.t, buf: await readFile(fr.file) });
       const detections = await detectRange({
         frames: loaded,
         srcW: meta.width,
@@ -56,31 +72,55 @@ export async function analyzeVideo(video, job, tmpDir) {
       console.warn(`Falha ao detectar rostos no trecho ${i}:`, e.message);
     }
 
-    const faceBonus = Math.min(1, faceCoverage / 0.7) * 0.25;
-    const score = Math.min(1, (c.audioScore || 0.5) * 0.9 + faceBonus);
+    const fallbackTitle = `Corte em destaque (${Math.round(c.start)}s–${Math.round(c.end)}s)`;
+    const title = makeTitle(c.stats, fallbackTitle);
+    const viral = viralPercent(c.score, faceCoverage);
+
     suggestions.push({
+      title,
       start: round2(c.start),
       end: round2(c.end),
-      score: round2(score),
-      audioScore: round2(c.audioScore || 0.5),
+      score: round2(c.score),
+      viralPct: viral,
+      audioScore: round2(c.audioScore || 0),
       faceCoverage: round2(faceCoverage),
-      reason: faceCoverage >= 0.5
-        ? 'Áudio animado + rosto do convidado em quadro'
-        : faceCoverage >= 0.2
-          ? 'Áudio animado, rosto parcialmente visível'
-          : 'Áudio animado (sem rosto detectado — enquadramento central)',
+      keywords: c.stats ? topKeywords(c.stats.words, 5) : [],
+      transcriptExcerpt: c.stats?.text ? c.stats.text.slice(0, 280) : '',
+      reason: buildReason(c, faceCoverage),
     });
   }
 
   const stats = windows.length ? computeSpeechStats(windows) : null;
   return {
     suggestions,
-    audio: stats ? {
-      speechRatio: round2(stats.speechRatio),
-      loud: round4(stats.loud),
-      noiseFloor: round4(stats.noiseFloor),
-    } : null,
+    keywords: topKeywords(
+      (transcript?.segments || []).flatMap((s) => s.text.split(/\s+/)),
+      12
+    ),
+    audio: stats
+      ? {
+          speechRatio: round2(stats.speechRatio),
+          loud: round4(stats.loud),
+          noiseFloor: round4(stats.noiseFloor),
+        }
+      : null,
+    transcript: transcript
+      ? { model: transcript.model, chars: transcript.text.length, segments: transcript.segments.length }
+      : null,
   };
+}
+
+function buildReason(c, faceCoverage) {
+  const parts = [];
+  if (c.stats?.hooks) parts.push(`${c.stats.hooks} gancho(s) de retenção`);
+  if (c.stats?.questions) parts.push(`${c.stats.questions} pergunta(s)`);
+  if (c.stats?.story) parts.push('tom de história');
+  if (c.stats?.emotional) parts.push('carga emocional');
+  if (c.audioScore > 0.6) parts.push('áudio animado');
+  if (faceCoverage >= 0.5) parts.push('convidado em quadro');
+  else if (faceCoverage > 0.15) parts.push('rosto parcial');
+  else parts.push('sem rosto estável');
+  return parts.length ? parts.join(' · ') : 'trecho equilibrado';
 }
 
 function round2(v) {
