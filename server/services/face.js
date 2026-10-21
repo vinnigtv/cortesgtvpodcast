@@ -48,7 +48,7 @@ export function faceDetectorReady() {
   return loaded;
 }
 
-export async function detectFacesInJpeg(buf) {
+export async function detectFacesInJpeg(buf, { inputSize = 224 } = {}) {
   if (!loaded) throw new Error('Detector de rosto não inicializado.');
   const { width, height, data } = jpeg.decode(buf, { useTArray: true, maxMemoryUsageInMB: 1024 });
   const n = width * height;
@@ -63,7 +63,7 @@ export async function detectFacesInJpeg(buf) {
   try {
     const dets = await faceapi.detectAllFaces(
       t,
-      new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.25 })
+      new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold: 0.25 })
     );
     return {
       width,
@@ -79,6 +79,39 @@ export async function detectFacesInJpeg(buf) {
   } finally {
     t.dispose();
   }
+}
+
+// Detecta com resolução crescente: rápido para close-ups, robusto em planos abertos.
+// Memoriza a resolução que funcionou (com histerese) para não pagar o custo extra.
+let preferredSize = 224;
+let pendingSize = null;
+let pendingHits = 0;
+
+export async function detectFacesAdaptive(buf, sizes = [224, 320, 416]) {
+  const order = [preferredSize, ...sizes.filter((s) => s !== preferredSize)];
+  let last = null;
+  for (const inputSize of order) {
+    const det = await detectFacesInJpeg(buf, { inputSize });
+    last = det;
+    if (det.faces.length) {
+      if (inputSize === preferredSize) {
+        pendingSize = null;
+        pendingHits = 0;
+      } else if (inputSize === pendingSize) {
+        pendingHits++;
+        if (pendingHits >= 2) {
+          preferredSize = inputSize;
+          pendingSize = null;
+          pendingHits = 0;
+        }
+      } else {
+        pendingSize = inputSize;
+        pendingHits = 1;
+      }
+      return det;
+    }
+  }
+  return last;
 }
 
 export function pickMainFace(faces) {

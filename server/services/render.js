@@ -1,8 +1,8 @@
-import { readFile, writeFile, rm } from 'node:fs/promises';
+﻿import { readFile, writeFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { extractFrames, ffmpegWithProgress, probe } from './video.js';
-import { detectFacesInJpeg } from './face.js';
+import { detectFacesAdaptive } from './face.js';
 import { detectRange, buildTrack, keyframesFromTrack, simplifyKeyframes, piecewiseLinear, centerCropFallback } from './tracker.js';
 
 const FONT_CANDIDATES = [
@@ -16,8 +16,8 @@ function pickFont() {
   return FONT_CANDIDATES.find((f) => existsSync(f)) || null;
 }
 
-// Quebra o texto do trecho em legendas curtas estilo Shorts (máx. 4 palavras),
-// distribuindo o tempo de cada segmento do Whisper proporcional ao nº de chars.
+// Quebra o texto do trecho em legendas curtas estilo Shorts (mÃ¡x. 4 palavras),
+// distribuindo o tempo de cada segmento do Whisper proporcional ao nÂº de chars.
 export function captionChunks(transcript, clipStart, clipEnd, { maxWords = 4 } = {}) {
   const segs = (transcript?.segments || []).filter(
     (s) => s.end > clipStart && s.start < clipEnd && s.text?.trim()
@@ -51,48 +51,52 @@ function escapeDrawtextPath(p) {
 export async function renderClip({ video, clip, outDir, tmpDir, job }) {
   const meta = await probe(video.path);
   const duration = clip.end - clip.start;
-  if (duration < 1) throw new Error('Duração do corte inválida.');
-  if (clip.end > meta.duration + 0.05) throw new Error('O corte vai além do fim do vídeo.');
+  if (duration < 1) throw new Error('DuraÃ§Ã£o do corte invÃ¡lida.');
+  if (clip.end > meta.duration + 0.05) throw new Error('O corte vai alÃ©m do fim do vÃ­deo.');
 
   job.message = 'Extraindo frames para rastreamento...';
   job.progress = 0.02;
 
-  const frames = await extractFrames({
-    input: video.path,
-    start: clip.start,
-    duration,
-    fps: 4,
-    height: 360,
-    outDir: path.join(tmpDir, `trk_${clip.id}`),
-  });
+  const isPortrait = meta.width / meta.height < 9 / 16;
+  let track = null;
+  if (!isPortrait) {
+    const frames = await extractFrames({
+      input: video.path,
+      start: clip.start,
+      duration,
+      fps: 2,
+      height: 360,
+      outDir: path.join(tmpDir, `trk_${clip.id}`),
+    });
 
-  job.message = 'Rastreando rosto do convidado...';
-  job.progress = 0.08;
+    job.message = 'Rastreando rosto do convidado...';
+    job.progress = 0.08;
 
-  const loaded = [];
-  for (const fr of frames) loaded.push({ t: fr.t, buf: await readFile(fr.file) });
+    const loaded = [];
+    for (const fr of frames) loaded.push({ t: fr.t, buf: await readFile(fr.file) });
 
-  const detections = await detectRange({
-    frames: loaded,
-    srcW: meta.width,
-    srcH: meta.height,
-    detect: detectFacesInJpeg,
-  });
+    const detections = await detectRange({
+      frames: loaded,
+      srcW: meta.width,
+      srcH: meta.height,
+      detect: detectFacesAdaptive,
+    });
 
-  const track = buildTrack(detections, {
-    srcW: meta.width,
-    srcH: meta.height,
-    fps: 4,
-  });
+    track = buildTrack(detections, {
+      srcW: meta.width,
+      srcH: meta.height,
+      fps: 2,
+    });
+  }
 
   let crop;
   let xExpr, yExpr;
-  if (track?.ok) {
+  if (!isPortrait && track?.ok) {
     const pts = keyframesFromTrack(track, duration, 1);
     crop = { cropW: track.cropW, cropH: track.cropH };
     xExpr = piecewiseLinear(simplifyKeyframes(pts.map((p) => ({ t: p.t, x: p.x }))));
     yExpr = piecewiseLinear(simplifyKeyframes(pts.map((p) => ({ t: p.t, x: p.y }))));
-  } else {
+  } else if (!isPortrait) {
     crop = centerCropFallback(meta.width, meta.height);
     xExpr = String(crop.x);
     yExpr = String(crop.y);
@@ -107,7 +111,10 @@ export async function renderClip({ video, clip, outDir, tmpDir, job }) {
 
   // filter graph em arquivo: expressões longas de crop estouram o limite de
   // linha de comando do Windows (erro "Failed to configure input pad")
-  let chain = `[0:v]crop=${crop.cropW}:${crop.cropH}:'floor(${xExpr}+0.5)':'floor(${yExpr}+0.5)',scale=${targetW}:${targetH}:flags=lanczos,setsar=1`;
+  let chain = isPortrait
+    ? // fonte mais estreita que 9:16: mostra o quadro inteiro sobre fundo desfocado
+      `[0:v]split=2[bg0][fg0];[bg0]scale=${targetW}:${targetH}:force_original_aspect_ratio=increase,crop=${targetW}:${targetH},boxblur=24:2[bg];[fg0]scale=-2:${targetH}[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2`
+    : `[0:v]crop=${crop.cropW}:${crop.cropH}:'floor(${xExpr}+0.5)':'floor(${yExpr}+0.5)',scale=${targetW}:${targetH}:flags=lanczos,setsar=1`;
 
   const captionFiles = [];
   const font = pickFont();
@@ -173,7 +180,10 @@ export async function renderClip({ video, clip, outDir, tmpDir, job }) {
     height: targetH,
     faceTracked: Boolean(track?.ok),
     faceCoverage: track ? Math.round(track.coverage * 100) / 100 : 0,
+    framing: isPortrait ? 'blur-pad' : track?.ok ? 'face-track' : 'center',
     captions: Boolean(wantCaptions),
     progressBar: wantBar,
   };
 }
+
+

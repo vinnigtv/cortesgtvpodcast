@@ -1,8 +1,8 @@
-import { readFile, rm } from 'node:fs/promises';
+﻿import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { extractPcm, extractFrames } from './video.js';
 import { pcmToWindows, computeSpeechStats } from './audioEnergy.js';
-import { detectFacesInJpeg } from './face.js';
+import { detectFacesAdaptive } from './face.js';
 import { detectRange } from './tracker.js';
 import { transcribeAudio } from './transcribe.js';
 import {
@@ -17,7 +17,7 @@ import {
 export async function analyzeVideo(video, job, tmpDir) {
   const { path: file, meta } = video;
 
-  job.message = 'Extraindo energia de áudio...';
+  job.message = 'Extraindo energia de Ã¡udio...';
   job.progress = 0.03;
   let windows = [];
   if (meta.hasAudio) {
@@ -25,7 +25,7 @@ export async function analyzeVideo(video, job, tmpDir) {
     windows = pcmToWindows(pcm);
   }
 
-  job.message = 'Transcrevendo e entendendo o conteúdo (Whisper IA)...';
+  job.message = 'Transcrevendo e entendendo o conteÃºdo (Whisper IA)...';
   job.progress = 0.08;
   let transcript = null;
   if (meta.hasAudio && meta.duration > 2) {
@@ -37,7 +37,7 @@ export async function analyzeVideo(video, job, tmpDir) {
     }
   }
 
-  job.message = 'Pontuando trechos e montando sugestões...';
+  job.message = 'Pontuando trechos e montando sugestÃµes...';
   job.progress = 0.4;
   const scored = buildCandidates(transcript, windows, { duration: meta.duration });
   const selected = selectCandidates(scored);
@@ -66,7 +66,7 @@ export async function analyzeVideo(video, job, tmpDir) {
         frames: loaded,
         srcW: meta.width,
         srcH: meta.height,
-        detect: detectFacesInJpeg,
+        detect: detectFacesAdaptive,
       });
       faceCoverage = detections.filter((d) => d.face).length / (detections.length || 1);
     } catch (e) {
@@ -75,7 +75,7 @@ export async function analyzeVideo(video, job, tmpDir) {
       await rm(candDir, { recursive: true, force: true }).catch(() => {});
     }
 
-    const fallbackTitle = `Corte em destaque (${Math.round(c.start)}s–${Math.round(c.end)}s)`;
+    const fallbackTitle = `Corte em destaque (${Math.round(c.start)}sâ€“${Math.round(c.end)}s)`;
     const title = makeTitle(c.stats, fallbackTitle);
     const viral = viralPercent(c.score, faceCoverage);
 
@@ -117,15 +117,15 @@ export async function analyzeVideo(video, job, tmpDir) {
 
 function buildReason(c, faceCoverage) {
   const parts = [];
-  if (c.stats?.hooks) parts.push(`${c.stats.hooks} gancho(s) de retenção`);
+  if (c.stats?.hooks) parts.push(`${c.stats.hooks} gancho(s) de retenÃ§Ã£o`);
   if (c.stats?.questions) parts.push(`${c.stats.questions} pergunta(s)`);
-  if (c.stats?.story) parts.push('tom de história');
+  if (c.stats?.story) parts.push('tom de histÃ³ria');
   if (c.stats?.emotional) parts.push('carga emocional');
-  if (c.audioScore > 0.6) parts.push('áudio animado');
+  if (c.audioScore > 0.6) parts.push('Ã¡udio animado');
   if (faceCoverage >= 0.5) parts.push('convidado em quadro');
   else if (faceCoverage > 0.15) parts.push('rosto parcial');
-  else parts.push('sem rosto estável');
-  return parts.length ? parts.join(' · ') : 'trecho equilibrado';
+  else parts.push('sem rosto estÃ¡vel');
+  return parts.length ? parts.join(' Â· ') : 'trecho equilibrado';
 }
 
 function round2(v) {
@@ -134,3 +134,4 @@ function round2(v) {
 function round4(v) {
   return Math.round(v * 10000) / 10000;
 }
+

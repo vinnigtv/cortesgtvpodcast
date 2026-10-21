@@ -229,9 +229,11 @@ export default function ClipCard({ clip, duration, src, selected, onToggle, onUp
               {clip.render && (
                 <div className="muted small">
                   {clip.render.width}×{clip.render.height} ·{' '}
-                  {clip.render.faceTracked
-                    ? `rosto rastreado (${Math.round(clip.render.faceCoverage * 100)}% dos frames)`
-                    : 'sem rosto estável — enquadramento central'}
+                  {clip.render.framing === 'blur-pad'
+                    ? 'quadro inteiro com fundo desfocado'
+                    : clip.render.faceTracked
+                      ? `rosto rastreado e centralizado (${Math.round(clip.render.faceCoverage * 100)}% dos frames)`
+                      : 'sem rosto estável — enquadramento central'}
                   {clip.render.captions ? ' · legendas' : ''}
                   {clip.render.progressBar ? ' · barra de progresso' : ''}
                 </div>

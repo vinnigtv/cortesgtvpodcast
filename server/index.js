@@ -88,7 +88,7 @@ function publicClip(c) {
     progress: c.progress,
     error: c.error,
     render: c.render
-      ? { faceTracked: c.render.faceTracked, faceCoverage: c.render.faceCoverage, width: c.render.width, height: c.render.height }
+      ? { faceTracked: c.render.faceTracked, faceCoverage: c.render.faceCoverage, width: c.render.width, height: c.render.height, framing: c.render.framing, captions: c.render.captions, progressBar: c.render.progressBar }
       : null,
     hasFile: c.file ? fs.existsSync(c.file) : false,
   };

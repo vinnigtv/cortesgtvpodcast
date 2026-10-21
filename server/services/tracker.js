@@ -1,14 +1,26 @@
 import { pickMainFace } from './face.js';
 
 export async function detectRange(opts) {
-  const { frames, srcW, srcH, detect } = opts;
+  const { frames, srcW, srcH, detect, maxMissSeconds = 6 } = opts;
   const results = [];
-  for (const fr of frames) {
+  const t0 = frames[0]?.t ?? 0;
+  let lastFaceT = null;
+  let lastProbeT = null;
+  for (let i = 0; i < frames.length; i++) {
+    const fr = frames[i];
+    const sinceFace = lastFaceT === null ? fr.t - t0 : fr.t - lastFaceT;
+    // sem rosto por muito tempo: só re-testa de 5 em 5s (evita custo alto)
+    if (sinceFace > maxMissSeconds && lastProbeT !== null && fr.t - lastProbeT < 5) {
+      results.push({ t: fr.t, face: null });
+      continue;
+    }
+    lastProbeT = fr.t;
     const { width, height, faces } = await detect(fr.buf);
     const sx = srcW / width;
     const sy = srcH / height;
     const main = pickMainFace(faces);
     if (main) {
+      lastFaceT = fr.t;
       results.push({
         t: fr.t,
         face: {
@@ -76,13 +88,10 @@ export function buildTrack(detections, { srcW, srcH, fps }) {
     sy[i] = ay / c;
   }
 
-  const faceW = srcW * 0.22;
-  const faceH = srcW * 0.28;
-  const expandedH = Math.min(srcH, faceH * 1.7);
-  const expandedW = Math.min(srcW, faceW * 2.2);
+  // Janela 9:16 na maior altura possível (altura cheia em fontes horizontais):
+  // assim o convidado cabe inteiro no quadro, sem cortar o corpo.
   const aspect = 9 / 16;
-  let cropH = Math.max(expandedH, expandedW / aspect);
-  cropH = Math.min(cropH, srcH, srcW * aspect);
+  const cropH = Math.min(srcH, srcW / aspect);
   const cropW = cropH * aspect;
   const centers = [];
   for (let i = 0; i < n; i++) {
@@ -159,7 +168,7 @@ export function piecewiseLinear(points, varName = 't') {
 
 export function centerCropFallback(srcW, srcH) {
   const aspect = 9 / 16;
-  const cropH = Math.min(srcH, srcW * aspect);
+  const cropH = Math.min(srcH, srcW / aspect);
   const cropW = evenFloor(cropH * aspect);
   const x = evenFloor((srcW - cropW) / 2);
   const y = evenFloor((srcH - cropH) / 2);

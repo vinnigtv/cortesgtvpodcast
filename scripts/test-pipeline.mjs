@@ -1,4 +1,4 @@
-import path from 'node:path';
+﻿import path from 'node:path';
 import fsp from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
@@ -7,7 +7,7 @@ import { probe, run } from '../server/services/video.js';
 import { initFaceDetector, faceDetectorReady, detectFacesInJpeg } from '../server/services/face.js';
 import { analyzeVideo } from '../server/services/analyze.js';
 import { renderClip } from '../server/services/render.js';
-import { simplifyKeyframes, piecewiseLinear } from '../server/services/tracker.js';
+import { simplifyKeyframes, piecewiseLinear, buildTrack, centerCropFallback } from '../server/services/tracker.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -18,7 +18,7 @@ let failures = 0;
 function check(name, cond, extra = '') {
   const mark = cond ? 'OK ' : 'FAIL';
   if (!cond) failures++;
-  console.log(`[${mark}] ${name}${extra ? ` — ${extra}` : ''}`);
+  console.log(`[${mark}] ${name}${extra ? ` â€” ${extra}` : ''}`);
 }
 
 function makeJob(label) {
@@ -87,40 +87,40 @@ async function main() {
   await fsp.mkdir(TMP, { recursive: true });
   await fsp.mkdir(OUT, { recursive: true });
 
-  console.log('== GTV Cortes IA — teste de pipeline ==\n');
+  console.log('== GTV Cortes IA â€” teste de pipeline ==\n');
 
   await initFaceDetector();
   check('TinyFaceDetector carregado', faceDetectorReady());
 
-  console.log('\n-- 1) Vídeo sintético (energia de áudio variável, sem rosto) --');
+  console.log('\n-- 1) VÃ­deo sintÃ©tico (energia de Ã¡udio variÃ¡vel, sem rosto) --');
   const synth = path.join(TMP, 'synth.mp4');
   await genSynthetic(synth);
   const meta1 = await probe(synth);
   check('probe detecta 1280x720', meta1.width === 1280 && meta1.height === 720);
-  check('probe detecta duração ~95s', Math.abs(meta1.duration - 95) < 3, `${meta1.duration.toFixed(1)}s`);
-  check('probe detecta áudio', meta1.hasAudio);
+  check('probe detecta duraÃ§Ã£o ~95s', Math.abs(meta1.duration - 95) < 3, `${meta1.duration.toFixed(1)}s`);
+  check('probe detecta Ã¡udio', meta1.hasAudio);
 
   const video1 = { id: 'synth', name: 'synth.mp4', path: synth, meta: meta1 };
-  const job1 = jobProxy('análise synth');
+  const job1 = jobProxy('anÃ¡lise synth');
   const result1 = await analyzeVideo(video1, job1, TMP);
-  check('análise retorna sugestões', result1.suggestions.length > 0, `${result1.suggestions.length} cortes`);
+  check('anÃ¡lise retorna sugestÃµes', result1.suggestions.length > 0, `${result1.suggestions.length} cortes`);
   const durationsOk = result1.suggestions.every(
     (s) => s.end - s.start >= 29 && s.end - s.start <= 91
   );
-  check('sugestões entre 30 e 90s', durationsOk);
+  check('sugestÃµes entre 30 e 90s', durationsOk);
   check(
-    'sugestões têm título',
+    'sugestÃµes tÃªm tÃ­tulo',
     result1.suggestions.every((s) => typeof s.title === 'string' && s.title.length > 3)
   );
   check(
-    'sugestões têm viralPct (5-98)',
+    'sugestÃµes tÃªm viralPct (5-98)',
     result1.suggestions.every((s) => Number.isFinite(s.viralPct) && s.viralPct >= 5 && s.viralPct <= 98),
     `ex.: ${result1.suggestions[0]?.viralPct}%`
   );
   const best = result1.suggestions[0];
-  console.log(`    melhor corte: ${best.start.toFixed(1)}s → ${best.end.toFixed(1)}s (score ${best.score})`);
+  console.log(`    melhor corte: ${best.start.toFixed(1)}s â†’ ${best.end.toFixed(1)}s (score ${best.score})`);
   const loudZone = result1.suggestions.some((s) => s.start < 35 && s.end > 15);
-  check('há corte cobrindo a zona de áudio alto (15-35s)', loudZone, `melhor: ${best.start}s-${best.end}s`);
+  check('hÃ¡ corte cobrindo a zona de Ã¡udio alto (15-35s)', loudZone, `melhor: ${best.start}s-${best.end}s`);
 
   const clip1 = {
     id: 'clip-synth',
@@ -132,17 +132,17 @@ async function main() {
   const out1 = await renderClip({ video: video1, clip: clip1, outDir: OUT, tmpDir: TMP, job: renderJob1 });
   const outMeta1 = await probe(out1.file);
   check('render synth gera 1080x1920', outMeta1.width === 1080 && outMeta1.height === 1920, `${outMeta1.width}x${outMeta1.height}`);
-  check('render synth mantém áudio', outMeta1.hasAudio);
+  check('render synth mantÃ©m Ã¡udio', outMeta1.hasAudio);
   const outDur = Math.abs(outMeta1.duration - (clip1.end - clip1.start));
-  check('duração do corte correta', outDur < 1.5, `${outMeta1.duration.toFixed(1)}s`);
+  check('duraÃ§Ã£o do corte correta', outDur < 1.5, `${outMeta1.duration.toFixed(1)}s`);
 
-  console.log('\n-- 2) Detecção de rosto em imagem real --');
+  console.log('\n-- 2) DetecÃ§Ã£o de rosto em imagem real --');
   const faceImg = await downloadFaceImage();
   const buf = await readFile(faceImg);
   const det = await detectFacesInJpeg(buf);
   check('TinyFaceDetector detecta rosto na foto', det.faces.length > 0, `${det.faces.length} rosto(s)`);
 
-  console.log('\n-- 2b) Expressão de crop longa (regressão limite de cmdline) --');
+  console.log('\n-- 2b) ExpressÃ£o de crop longa (regressÃ£o limite de cmdline) --');
   const longPts = Array.from({ length: 400 }, (_, i) => ({
     t: i * 0.5,
     x: 400 + Math.sin(i / 3) * 60 + (i % 7) * 0.4,
@@ -153,19 +153,39 @@ async function main() {
   const simpExprX = piecewiseLinear(simp.map((p) => ({ t: p.t, x: p.x })));
   const simpExprY = piecewiseLinear(simp.map((p) => ({ t: p.t, x: p.y })));
   check(
-    'expressão simplificada < 8k chars',
+    'expressÃ£o simplificada < 8k chars',
     simpExprX.length < 8000 && simpExprY.length < 8000,
-    `bruta=${rawExpr.length} chars → simplificada=${simpExprX.length} chars (${simp.length} pts)`
+    `bruta=${rawExpr.length} chars â†’ simplificada=${simpExprX.length} chars (${simp.length} pts)`
   );
 
-  console.log('\n-- 3) Vídeo com rosto em movimento (tracking + crop) --');
+  console.log('\n-- 2c) Enquadramento nÃ£o corta o corpo (altura cheia) --');
+  const det43 = Array.from({ length: 20 }, (_, i) => ({
+    t: i * 0.25,
+    face: { x1: 520, y1: 300, x2: 720, y2: 520, score: 0.9 },
+  }));
+  const track43 = buildTrack(det43, { srcW: 1440, srcH: 1080, fps: 4 });
+  check(
+    'crop 4:3 usa altura cheia (sem cortar corpo)',
+    track43.ok && track43.cropH === 1080,
+    `${track43.cropW}x${track43.cropH} de 1440x1080`
+  );
+  const track169 = buildTrack(det43, { srcW: 1920, srcH: 1080, fps: 4 });
+  check(
+    'crop 16:9 usa altura cheia',
+    track169.ok && track169.cropH === 1080,
+    `${track169.cropW}x${track169.cropH} de 1920x1080`
+  );
+  const fb = centerCropFallback(1280, 720);
+  check('fallback tambÃ©m usa altura cheia', fb.cropH === 720, `${fb.cropW}x${fb.cropH}`);
+
+  console.log('\n-- 3) VÃ­deo com rosto em movimento (tracking + crop) --');
   const faceVid = path.join(TMP, 'facevid.mp4');
   await genFaceVideo(faceVid, faceImg);
   const meta2 = await probe(faceVid);
   const video2 = { id: 'facevid', name: 'facevid.mp4', path: faceVid, meta: meta2 };
-  const job2 = jobProxy('análise face');
+  const job2 = jobProxy('anÃ¡lise face');
   const result2 = await analyzeVideo(video2, job2, TMP);
-  check('análise face detecta rosto', result2.suggestions.some((s) => s.faceCoverage > 0.4),
+  check('anÃ¡lise face detecta rosto', result2.suggestions.some((s) => s.faceCoverage > 0.4),
     `maior cobertura: ${Math.max(...result2.suggestions.map((s) => s.faceCoverage), 0)}`);
 
   const best2 = [...result2.suggestions].sort((a, b) => b.faceCoverage - a.faceCoverage)[0];
@@ -176,6 +196,28 @@ async function main() {
   check('render face gera 1080x1920', outMeta2.width === 1080 && outMeta2.height === 1920);
   check('render face usa rastreamento de rosto', out2.faceTracked === true, `coverage ${out2.faceCoverage}`);
 
+  console.log('\n-- 4) Fonte retrato/quase quadrada (fundo desfocado, nada cortado) --');
+  const portraitVid = path.join(TMP, 'portrait.mp4');
+  await run(ffmpegPath, [
+    '-y', '-f', 'lavfi', '-i', 'testsrc2=size=640x1280:rate=30:duration=8',
+    '-f', 'lavfi', '-i', 'sine=frequency=250:duration=8,volume=0.4',
+    '-map', '0:v', '-map', '1:a', '-t', '8',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest',
+    portraitVid,
+  ]);
+  const metaP = await probe(portraitVid);
+  const videoP = { id: 'portrait', name: 'portrait.mp4', path: portraitVid, meta: metaP };
+  const outP = await renderClip({
+    video: videoP,
+    clip: { id: 'clip-portrait', start: 0, end: 6 },
+    outDir: OUT,
+    tmpDir: TMP,
+    job: jobProxy('render portrait'),
+  });
+  const outMetaP = await probe(outP.file);
+  check('fonte retrato usa fundo desfocado', outP.framing === 'blur-pad', outP.framing);
+  check('fonte retrato gera 1080x1920', outMetaP.width === 1080 && outMetaP.height === 1920);
+
   console.log(`\n== Resultado: ${failures === 0 ? 'TODOS OS TESTES PASSARAM' : failures + ' FALHA(S)'} ==`);
   process.exit(failures === 0 ? 0 : 1);
 }
@@ -184,3 +226,4 @@ main().catch((e) => {
   console.error('Erro fatal no teste:', e);
   process.exit(1);
 });
+
